@@ -1,0 +1,65 @@
+[
+  {
+    "step": 10,
+    "loss": null,
+    "learning_rate": null,
+    "grad_norm": null,
+    "timestamp": "2025-10-09T17:22:20.764729"
+  },
+  {
+    "step": 20,
+    "loss": 6.0199,
+    "learning_rate": 0.00027065217391304344,
+    "grad_norm": 1591.6820068359375,
+    "timestamp": "2025-10-09T17:22:43.993776"
+  },
+  {
+    "step": 30,
+    "loss": null,
+    "learning_rate": null,
+    "grad_norm": null,
+    "timestamp": "2025-10-09T17:24:16.723596"
+  },
+  {
+    "step": 40,
+    "loss": 16.4471,
+    "learning_rate": 0.00020543478260869565,
+    "grad_norm": 32302.037109375,
+    "timestamp": "2025-10-09T17:25:02.237861"
+  },
+  {
+    "step": 50,
+    "loss": null,
+    "learning_rate": null,
+    "grad_norm": null,
+    "timestamp": "2025-10-09T17:29:57.570648"
+  },
+  {
+    "step": 60,
+    "loss": 12.0978,
+    "learning_rate": 0.00014021739130434783,
+    "grad_norm": 72.85456848144531,
+    "timestamp": "2025-10-09T17:31:10.318766"
+  },
+  {
+    "step": 70,
+    "loss": null,
+    "learning_rate": null,
+    "grad_norm": null,
+    "timestamp": "2025-10-09T17:33:02.849311"
+  },
+  {
+    "step": 80,
+    "loss": 4.0988,
+    "learning_rate": 7.5e-05,
+    "grad_norm": 1952.8927001953125,
+    "timestamp": "2025-10-09T17:33:28.499176"
+  },
+  {
+    "step": 90,
+    "loss": null,
+    "learning_rate": null,
+    "grad_norm": null,
+    "timestamp": "2025-10-09T17:34:36.349543"
+  }
+]

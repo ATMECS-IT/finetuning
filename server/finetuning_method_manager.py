@@ -1,11 +1,11 @@
 import logging
 import torch
+import os
 from transformers import Trainer, TrainingArguments
-from peft import (
-    get_peft_model,
-    LoraConfig,
-    TaskType,
-)
+from peft import get_peft_model, LoraConfig, TaskType
+from metrics_manager import MetricsCallback, compute_metrics
+from trl import SFTTrainer, SFTConfig
+from transformers import Trainer, TrainingArguments
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,11 @@ def find_target_modules(model):
         keyword in name.lower() for keyword in ['q_proj', 'v_proj', 'k_proj', 'o_proj','query', 'value', 'key', 'dense', 'c_attn', 'c_proj']
     )]
     
+    target_modules = [name for name in target_modules if 'lm_head' not in name.lower() 
+                     and 'embed' not in name.lower()]
     if not target_modules:
-        target_modules = list(module_names)[:2]  # fallback to first 2 linear layers
+        logger.warning("Auto-detection failed. Using GPT-2 default modules: ['c_attn', 'c_proj']")
+        target_modules = ['c_attn', 'c_proj']
     
     logger.info(f"Auto-detected target modules: {target_modules}")
     return target_modules
@@ -31,11 +34,12 @@ class BaseFinetuneMethod:
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
+        self.peft_config = None 
 
     def prepare_model(self):
         return self.model
 
-    def train(self, dataloader):
+    def train(self, train_dataset, eval_dataset=None):
         device_preference = self.config["fine_tuning"].get("device", "auto").lower()
         
         use_fp16 = False
@@ -77,33 +81,91 @@ class BaseFinetuneMethod:
         
         else:
             raise ValueError(f"Invalid device: {device_preference}. Choose from: auto, cuda, mps, cpu")
+
+        metrics_callback = MetricsCallback(self.config)
+        timestamped_output_dir = os.path.join(
+            metrics_callback.metrics_dir,
+            "model"
+        )
+        os.makedirs(timestamped_output_dir, exist_ok=True)
+        technique = self.config["fine_tuning"].get("technique", "lora").lower()
         
+        # SFT Configuration
+        if eval_dataset:
+            eval_strategy = "steps"
+            eval_steps = int(self.config.get("eval_steps", 100))
+            save_strategy = "steps"
+            save_steps = eval_steps
+            load_best = True
+        else:
+            eval_strategy = "no"
+            eval_steps = None
+            save_strategy = self.config["fine_tuning"].get("save_strategy", "epoch")
+            save_steps = None
+            load_best = False
+        
+        # sft_config = SFTConfig(
+        #     output_dir=self.config["fine_tuning"]["output_dir"],
+        #     num_train_epochs=int(self.config["fine_tuning"].get("epochs", 3)),
+        #     per_device_train_batch_size=int(self.config["fine_tuning"].get("batch_size", 4)),
+        #     gradient_accumulation_steps=int(self.config["fine_tuning"].get("grad_acc_steps", 4)),
+        #     learning_rate=float(self.config["fine_tuning"].get("learning_rate", 3e-4)),
+        #     logging_steps=int(self.config.get("log_interval", 10)),
+        #     save_strategy=save_strategy,
+        #     save_steps=save_steps,
+        #     eval_strategy=eval_strategy,
+        #     eval_steps=eval_steps,
+        #     load_best_model_at_end=load_best,
+        #     max_length=int(self.config.get("max_length", 512)),
+        #     packing=self.config.get("packing", False),
+        #     dataset_text_field=None,  # Will be handled automatically by SFTTrainer
+        #     fp16=use_fp16,
+        #     bf16=use_bf16,
+        # )
+        
+        # # Initialize trainer with optional PEFT config
+        # trainer = SFTTrainer(
+        #     model=self.model,
+        #     args=sft_config,
+        #     train_dataset=train_dataset,  # Pass dataset directly, not dataloader.dataset
+        #     eval_dataset=eval_dataset if eval_dataset else None,
+        #     processing_class=self.tokenizer,
+        #     peft_config=self.peft_config,
+        #     callbacks=[metrics_callback],
+        # )
+        
+        # # Train
+        # trainer.train()
         training_args = TrainingArguments(
-            output_dir=self.config["fine_tuning"]["output_dir"],
+            output_dir=timestamped_output_dir,
             num_train_epochs=int(self.config["fine_tuning"].get("epochs", 3)),
-            per_device_train_batch_size=int(self.config["fine_tuning"].get("batch_size", 8)),
-            gradient_accumulation_steps=int(self.config["fine_tuning"].get("gradient_accumulation_steps", 1)),
-            learning_rate=float(self.config["fine_tuning"].get("learning_rate", 2e-5)),
-            save_strategy=self.config["fine_tuning"].get("save_strategy", "epoch"),
-            logging_steps=int(self.config.get("log_every_steps", 10)),
-            report_to="tensorboard" if self.config.get("log_every_steps") else "none",
+            per_device_train_batch_size=int(self.config["fine_tuning"].get("batch_size", 4)),
+            per_device_eval_batch_size=int(self.config["fine_tuning"].get("batch_size", 4)),
+            gradient_accumulation_steps=int(self.config["fine_tuning"].get("grad_acc_steps", 4)),
+            learning_rate=float(self.config["fine_tuning"].get("learning_rate", 3e-4)),
+            logging_steps=int(self.config.get("log_interval", 10)),
+            save_strategy=save_strategy,
+            save_steps=save_steps,
+            eval_strategy=eval_strategy,
+            eval_steps=eval_steps,
+            load_best_model_at_end=load_best,
             fp16=use_fp16,
             bf16=use_bf16,
-            use_cpu=use_cpu,
-            resume_from_checkpoint=self.config["fine_tuning"].get("resume_checkpoint"),
+            report_to="none",  # Disable wandb/tensorboard if not configured
         )
         
         trainer = Trainer(
             model=self.model,
             args=training_args,
-            train_dataset=dataloader.dataset,
-            tokenizer=self.tokenizer,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset if eval_dataset else None,
+            compute_metrics=compute_metrics,  
+            callbacks=[metrics_callback],
         )
-        
         trainer.train()
-        trainer.save_model(self.config["fine_tuning"]["output_dir"])
-        self.tokenizer.save_pretrained(self.config["fine_tuning"]["output_dir"])
-        logger.info(f"Model and tokenizer saved at {self.config['fine_tuning']['output_dir']}")
+        trainer.save_model(timestamped_output_dir) 
+        self.tokenizer.save_pretrained(timestamped_output_dir)
+        logger.info(f"Model and tokenizer saved at {timestamped_output_dir}")
         return self.model, self.tokenizer
 
 
@@ -115,15 +177,14 @@ class LoRAMethod(BaseFinetuneMethod):
         else:
             target_modules = find_target_modules(self.model)
         
-        lora_config = LoraConfig(
+        self.peft_config = LoraConfig(
             r=int(self.config.get("lora_r", 8)),
-            lora_alpha=int(self.config.get("lora_alpha", 32)),
-            lora_dropout=float(self.config.get("lora_dropout", 0.05)),
+            lora_alpha=int(self.config.get("lora_alpha", 16)),
+            lora_dropout=float(self.config.get("lora_dropout", 0.1)),
             target_modules=target_modules,
             bias=self.config.get("lora_bias", "none"),
             task_type=TaskType.CAUSAL_LM,
         )
-        self.model = get_peft_model(self.model, lora_config)
         logger.info("LoRA adapter applied to model")
         return self.model
 
@@ -136,16 +197,16 @@ class QLoRAMethod(BaseFinetuneMethod):
         else:
             target_modules = find_target_modules(self.model)
         
-        lora_config = LoraConfig(
+        self.peft_config = LoraConfig(
             r=int(self.config.get("lora_r", 8)),
-            lora_alpha=int(self.config.get("lora_alpha", 32)),
-            lora_dropout=float(self.config.get("lora_dropout", 0.05)),
+            lora_alpha=int(self.config.get("lora_alpha", 16)),
+            lora_dropout=float(self.config.get("lora_dropout", 0.1)),
             target_modules=target_modules,
             bias=self.config.get("lora_bias", "none"),
             task_type=TaskType.CAUSAL_LM,
         )
-        self.model = get_peft_model(self.model, lora_config)
-        logger.info("QLoRA adapter applied to quantized model")
+        
+        logger.info("QLoRA configuration prepared for quantized model")
         return self.model
 
 
@@ -157,17 +218,17 @@ class DoRAMethod(BaseFinetuneMethod):
         else:
             target_modules = find_target_modules(self.model)
         
-        lora_config = LoraConfig(
+        self.peft_config = LoraConfig(
             r=int(self.config.get("lora_r", 8)),
-            lora_alpha=int(self.config.get("lora_alpha", 32)),
-            lora_dropout=float(self.config.get("lora_dropout", 0.05)),
+            lora_alpha=int(self.config.get("lora_alpha", 16)),
+            lora_dropout=float(self.config.get("lora_dropout", 0.1)),
             target_modules=target_modules,
             bias=self.config.get("lora_bias", "none"),
-            use_dora=True,  # Enable DoRA
+            use_dora=True,
             task_type=TaskType.CAUSAL_LM,
         )
-        self.model = get_peft_model(self.model, lora_config)
-        logger.info("DoRA adapter applied to model")
+        
+        logger.info("DoRA configuration prepared")
         return self.model
 
 
@@ -180,8 +241,8 @@ class AdapterMethod(BaseFinetuneMethod):
         logger.info(f"Loading adapter from {adapter_path}")
         from peft import PeftModel
         self.model = PeftModel.from_pretrained(self.model, adapter_path)
+        self.peft_config = None
         return self.model
-
 
 
 FINETUNING_METHODS = {
@@ -192,9 +253,8 @@ FINETUNING_METHODS = {
 }
 
 
-def finetune_model(model, tokenizer, dataloader, config):
+def finetune_model(model, tokenizer, train_dataset, config, eval_dataset=None):
     technique = config["fine_tuning"].get("technique", "lora").lower()
-    
     MethodClass = FINETUNING_METHODS.get(technique)
     if MethodClass is None:
         raise ValueError(
@@ -204,4 +264,4 @@ def finetune_model(model, tokenizer, dataloader, config):
     
     finetuner = MethodClass(model, tokenizer, config)
     model = finetuner.prepare_model()
-    return finetuner.train(dataloader)
+    return finetuner.train(train_dataset, eval_dataset)

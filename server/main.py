@@ -28,13 +28,23 @@ def parse_args():
     parser.add_argument('-dataset_type', '--dataset_type', type=str, default=None,
                         choices=['plain_text', 'mcq_jsonl', 'instruction_jsonl'],
                         help='Type of dataset')
-    
+    parser.add_argument('--val_path', type=str, default=None,
+                       help='Path to validation data file (optional)')
+    parser.add_argument('--test_path', type=str, default=None,
+                       help='Path to test data file (optional)')
+    parser.add_argument('--train_ratio', type=float, default=None,
+                       help='Training data ratio (if splitting from single file)')
+    parser.add_argument('--val_ratio', type=float, default=None,
+                       help='Validation data ratio (if splitting from single file)')
+    parser.add_argument('--test_ratio', type=float, default=None,
+                       help='Test data ratio (if splitting from single file)')
+    parser.add_argument('--split_seed', type=int, default=None,
+                       help='Random seed for dataset splitting')
     parser.add_argument('-technique', '--technique', type=str, default=None,
                         choices=['lora', 'qlora', 'dora', 'adapter'],
                         help='Fine-tuning technique')
     parser.add_argument('-savepath', '--save_path', type=str, default=None,
                         help='Path where model will be saved')
-    
     parser.add_argument('-epochs', '--epochs', type=int, default=None,
                         help='Number of training epochs')
     parser.add_argument('-batch_size', '--batch_size', type=int, default=None,
@@ -44,6 +54,8 @@ def parse_args():
     parser.add_argument('-device', '--device', type=str, default=None,
                         choices=['auto', 'cuda', 'mps', 'cpu'],
                         help='Device to use for training')
+    parser.add_argument('--eval_steps', type=int, default=None,
+                       help='Evaluate every N steps')
     
     parser.add_argument('-lora_r', '--lora_r', type=int, default=None,
                         help='LoRA rank')
@@ -70,6 +82,18 @@ def build_config_from_args(args):
         cli_config.setdefault('training_data', {})['path'] = args.data_path
     if args.dataset_type:
         cli_config.setdefault('training_data', {})['dataset_type'] = args.dataset_type
+    if args.val_path:
+        cli_config.setdefault('training_data', {})['val_path'] = args.val_path
+    if args.test_path:
+        cli_config.setdefault('training_data', {})['test_path'] = args.test_path
+    if args.train_ratio is not None:
+        cli_config.setdefault('training_data', {})['train_ratio'] = str(args.train_ratio)
+    if args.val_ratio is not None:
+        cli_config.setdefault('training_data', {})['val_ratio'] = str(args.val_ratio)
+    if args.test_ratio is not None:
+        cli_config.setdefault('training_data', {})['test_ratio'] = str(args.test_ratio)
+    if args.split_seed is not None:
+        cli_config.setdefault('training_data', {})['split_seed'] = str(args.split_seed)
     
     if args.technique:
         cli_config.setdefault('fine_tuning', {})['technique'] = args.technique
@@ -83,6 +107,9 @@ def build_config_from_args(args):
         cli_config.setdefault('fine_tuning', {})['learning_rate'] = str(args.learning_rate)
     if args.device:
         cli_config.setdefault('fine_tuning', {})['device'] = args.device
+    
+    if args.eval_steps is not None:
+        cli_config['eval_steps'] = str(args.eval_steps)
     
     if args.lora_r:
         cli_config['lora_r'] = str(args.lora_r)
@@ -121,12 +148,38 @@ def main():
     model, tokenizer = load_model_from_config(config)
     
     logger.info("Loading dataset...")
-    dataloader = load_dataset_from_config(config, tokenizer)
+    datasets = load_dataset_from_config(config, tokenizer)
+    
+    train_dataset = datasets['train']
+    val_dataset = datasets.get('val')
+    test_dataset = datasets.get('test')
+    
+    logger.info(f"Train samples: {len(train_dataset)}")
+    if val_dataset:
+        logger.info(f"Validation samples: {len(val_dataset)}")
+    if test_dataset:
+        logger.info(f"Test samples: {len(test_dataset)}")
     
     logger.info("Starting fine-tuning...")
-    model, tokenizer = finetune_model(model, tokenizer, dataloader, config)
+    model, tokenizer = finetune_model(model, tokenizer, train_dataset, config, val_dataset)
     
     logger.info(f"Fine-tuning complete! Model saved to {config['fine_tuning']['output_dir']}")
+    test_prompts_str = config.get("test_prompts", "")
+    if test_prompts_str:
+        logger.info("Generating comparison report...")
+        from report_generator import ReportGenerator
+        
+        test_prompts = [p.strip() for p in test_prompts_str.split(",") if p.strip()]
+        config["test_prompts"] = test_prompts
+        
+        base_model, base_tokenizer = load_model_from_config(config)
+        
+        report_gen = ReportGenerator(config)
+        report = report_gen.generate_comparison_report(
+            base_model, base_tokenizer,
+            model, tokenizer
+        )
+        logger.info(f"Comparison report saved to {config.get('report_path')}")
 
 
 if __name__ == "__main__":

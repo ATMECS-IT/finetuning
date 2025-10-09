@@ -1,0 +1,40 @@
+{
+  "training_summary": {
+    "total_steps": 92,
+    "total_epochs": 4,
+    "total_training_time": 764.9703681468964,
+    "avg_epoch_time": 191.2425920367241,
+    "final_train_loss": 11.9104,
+    "final_eval_loss": 11.065009117126465,
+    "best_train_loss": 4.6199,
+    "best_eval_loss": 3.324739456176758,
+    "best_eval_accuracy": 0.6173828125,
+    "final_eval_accuracy": 0.0025390625,
+    "best_eval_f1": 0.5736407576263283,
+    "final_eval_f1": 9.462344720496894e-05,
+    "best_eval_precision": 0.5397142943394584,
+    "final_eval_precision": 4.821004746835443e-05,
+    "best_eval_recall": 0.6173828125,
+    "final_eval_recall": 0.0025390625
+  },
+  "configuration": {
+    "model": "gpt2",
+    "technique": "lora",
+    "learning_rate": "3e-4",
+    "batch_size": "1",
+    "epochs": "4",
+    "lora_r": "8",
+    "lora_alpha": "16",
+    "dataset_type": "mcq_jsonl"
+  },
+  "metrics_files": {
+    "step_metrics": "results/default_project/gpt2/20251009_172156/step_metrics.json",
+    "epoch_metrics": "results/default_project/gpt2/20251009_172156/epoch_metrics.json",
+    "final_metrics": "results/default_project/gpt2/20251009_172156/final_metrics.json"
+  },
+  "run_info": {
+    "timestamp": "20251009_172156",
+    "metrics_directory": "results/default_project/gpt2/20251009_172156",
+    "completed_at": "2025-10-09T17:34:42.666398"
+  }
+}
