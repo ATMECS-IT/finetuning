@@ -166,7 +166,7 @@ class BaseFinetuneMethod:
         trainer.save_model(timestamped_output_dir) 
         self.tokenizer.save_pretrained(timestamped_output_dir)
         logger.info(f"Model and tokenizer saved at {timestamped_output_dir}")
-        return self.model, self.tokenizer
+        return self.model, self.tokenizer, metrics_callback.metrics_dir
 
 
 class LoRAMethod(BaseFinetuneMethod):

@@ -1,10 +1,12 @@
 import argparse
 import os
+import torch
 import logging
 from config_parser import load_config_from_env, merge_configs
 from model_manager import load_model_from_config
 from dataset_manager import load_dataset_from_config
 from finetuning_method_manager import finetune_model
+from model_comparator import ModelComparator
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -56,7 +58,8 @@ def parse_args():
                         help='Device to use for training')
     parser.add_argument('--eval_steps', type=int, default=None,
                        help='Evaluate every N steps')
-    
+    parser.add_argument('--prompts_file', type=str, default=None,
+                   help='Path to prompts.txt file for model comparison')
     parser.add_argument('-lora_r', '--lora_r', type=int, default=None,
                         help='LoRA rank')
     parser.add_argument('-lora_alpha', '--lora_alpha', type=int, default=None,
@@ -161,25 +164,31 @@ def main():
         logger.info(f"Test samples: {len(test_dataset)}")
     
     logger.info("Starting fine-tuning...")
-    model, tokenizer = finetune_model(model, tokenizer, train_dataset, config, val_dataset)
+    finetuned_model, tokenizer, metrics_dir = finetune_model(
+        model, tokenizer, train_dataset, config, val_dataset
+    )
     
     logger.info(f"Fine-tuning complete! Model saved to {config['fine_tuning']['output_dir']}")
-    test_prompts_str = config.get("test_prompts", "")
-    if test_prompts_str:
-        logger.info("Generating comparison report...")
-        from report_generator import ReportGenerator
+    prompts_file = config.get("prompts_file", "./prompts.txt")
+    if os.path.exists(prompts_file):
+        logger.info("\nStarting model comparison with prompts...")
         
-        test_prompts = [p.strip() for p in test_prompts_str.split(",") if p.strip()]
-        config["test_prompts"] = test_prompts
+        comparator = ModelComparator(config, metrics_dir)
         
-        base_model, base_tokenizer = load_model_from_config(config)
+        device = config["fine_tuning"].get("device", "cpu")
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        report_gen = ReportGenerator(config)
-        report = report_gen.generate_comparison_report(
-            base_model, base_tokenizer,
-            model, tokenizer
+        finetuned_model_path = os.path.join(metrics_dir, "model")
+        comparison_report = comparator.compare_models(
+            base_model_name=config['model']['name'],
+            finetuned_model_path=finetuned_model_path,
+            prompts_file=prompts_file,
+            device=device,
+            num_workers=1 
         )
-        logger.info(f"Comparison report saved to {config.get('report_path')}")
+    else:
+        logger.info(f"Prompts file not found at {prompts_file}. Skipping model comparison.")
 
 
 if __name__ == "__main__":
