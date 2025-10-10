@@ -132,10 +132,8 @@ Automatically compares base and fine-tuned model outputs.
 ---
 
 ## Configuration File Usage
+## Create `.env` Files for Reusable Configurations
 
-Create `.env` files for reusable configurations:
-
-```text
 PROJECT_NAME=my_project
 MODEL_NAME=gpt2
 TRAIN_DATA_PATH=./data/train.jsonl
@@ -148,19 +146,16 @@ DEVICE=cuda
 LORA_R=16
 LORA_ALPHA=32
 OUTPUT_DIR=./results/my_model
-Run with:
 
-bash
-Copy code
+Run with:
 python main.py --config my_config.env
+
 CLI arguments override config file values.
 
 Example Command Combinations
-Example 1: Quick CPU Test Run
-Fast testing on small dataset with minimal resources.
 
-bash
-Copy code
+Example 1: Quick CPU Test Run  
+Fast testing on small dataset with minimal resources.
 python main.py \
   --model_name gpt2 \
   --data_path ./data/sample.jsonl \
@@ -171,13 +166,11 @@ python main.py \
   --device cpu \
   --train_ratio 1.0 \
   --val_ratio 0.0
+
 Use when testing framework setup, debugging, or quick iterations.
 
-Example 2: Standard GPU Training with Validation
+Example 2: Standard GPU Training with Validation  
 Production training with evaluation metrics.
-
-bash
-Copy code
 python main.py \
   --model_name gpt2 \
   --data_path ./data/train.jsonl \
@@ -192,13 +185,11 @@ python main.py \
   --learning_rate 2e-4 \
   --device cuda \
   --eval_steps 50
+
 Use when training with comprehensive metrics and validation.
 
-Example 3: Memory-Efficient Large Model Training
+Example 3: Memory-Efficient Large Model Training  
 Training 7B+ parameter models with limited VRAM.
-
-bash
-Copy code
 python main.py \
   --model_name meta-llama/Llama-2-7b-hf \
   --hf_token your_token_here \
@@ -214,13 +205,11 @@ python main.py \
   --train_ratio 0.85 \
   --val_ratio 0.15 \
   --eval_steps 100
+
 Use when fine-tuning large models with 8GB–16GB GPU memory.
 
-Example 4: Medical Question Answering with Prompts
+Example 4: Medical Question Answering with Prompts  
 Domain-specific fine-tuning with comparison testing.
-
-bash
-Copy code
 python main.py \
   --model_name gpt2 \
   --data_path ./data/medical_qa.jsonl \
@@ -237,13 +226,11 @@ python main.py \
   --device cuda \
   --eval_steps 25 \
   --prompts_file ./medical_prompts.txt
+
 Use when creating specialized models for specific domains.
 
-Example 5: Instruction Tuning with Separate Files
+Example 5: Instruction Tuning with Separate Files  
 Training with pre-split datasets.
-
-bash
-Copy code
 python main.py \
   --model_name distilgpt2 \
   --data_path ./data/train_instructions.jsonl \
@@ -255,13 +242,11 @@ python main.py \
   --batch_size 16 \
   --device cuda \
   --eval_steps 200
+
 Use when you have pre-split train/val/test datasets.
 
-Example 6: DoRA Advanced Fine-Tuning
+Example 6: DoRA Advanced Fine-Tuning  
 Using DoRA technique for improved performance.
-
-bash
-Copy code
 python main.py \
   --model_name gpt2 \
   --data_path ./data/train.jsonl \
@@ -278,15 +263,12 @@ python main.py \
   --train_ratio 0.9 \
   --val_ratio 0.1 \
   --eval_steps 50
+
 Use when you want potentially better performance than standard LoRA.
 
-Example 7: Using Configuration File
+Example 7: Using Configuration File  
 Simplifying complex setups with config files.
-
 Create production.env:
-
-text
-Copy code
 MODEL_NAME=meta-llama/Llama-2-13b-hf
 TRAIN_DATA_PATH=./data/large_dataset.jsonl
 DATASET_TYPE=instruction_jsonl
@@ -299,23 +281,23 @@ GRAD_ACC_STEPS=2
 LEARNING_RATE=1e-4
 DEVICE=cuda
 EVAL_STEPS=100
-Run with:
 
-bash
-Copy code
+Run with:
 python main.py --config production.env --hf_token your_token
+
 Use when managing multiple configurations or collaborating with teams.
 
-## Output Interpretation
+Output Interpretation  
 
 Training generates these files in timestamped directories:
+- step_metrics.json: Loss, learning rate, gradient norm per logging step  
+- epoch_metrics.json: Train loss, validation loss, accuracy, F1, precision, recall per epoch  
+- final_metrics.json: Complete training summary with best scores and configuration  
+- model_comparison.json: Base vs fine-tuned model responses (if prompts provided)  
+- model/: Directory containing fine-tuned adapter weights  
 
-- **step_metrics.json:** Loss, learning rate, gradient norm per logging step  
-- **epoch_metrics.json:** Train loss, validation loss, accuracy, F1, precision, recall per epoch  
-- **final_metrics.json:** Complete training summary with best scores and configuration  
-- **model_comparison.json:** Base vs fine-tuned model responses (if prompts provided)  
-- **model/:** Directory containing fine-tuned adapter weights  
 
-All metrics are automatically saved to:
+All metrics are automatically saved to:  
 results/project_name/model_name/YYYYMMDD_HHMMSS/
+
 
