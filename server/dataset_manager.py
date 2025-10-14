@@ -35,7 +35,7 @@ class MCQDataset(Dataset):
             for line in f:
                 obj = json.loads(line)
                 prompt = f"Question: {obj['question']}\nAnswer:"
-                answer = obj["answer"]
+                answer = obj["options"][obj["answer"]]
                 self.samples.append((prompt, answer))
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -99,9 +99,6 @@ class SubsetDataset(Dataset):
 
 
 def split_dataset(dataset, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=42):
-    """
-    Split dataset into train, validation, and test sets.
-    """
     assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, \
         "Train, val, and test ratios must sum to 1.0"
     
@@ -127,14 +124,10 @@ def split_dataset(dataset, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=
     return train_dataset, val_dataset, test_dataset
 
 
-def load_dataset_from_config(config, tokenizer):
-    """
-    Load dataset with support for train/val/test splits.
-    Returns dictionary with 'train', 'val', 'test' datasets.
-    """
+def load_dataset_from_config(config, tokenizer, logger):
     data_path = config["training_data"]["path"]
     dataset_type = config["training_data"].get("dataset_type", "plain_text").lower()
-    max_length = int(config.get("max_length", 512))
+    max_length = int(config.get("max_length", 1024))
     if dataset_type == "plain_text":
         full_dataset = PlainTextDataset(data_path, tokenizer, max_length)
     elif dataset_type == "mcq_jsonl":
@@ -148,6 +141,7 @@ def load_dataset_from_config(config, tokenizer):
     test_path = config["training_data"].get("test_path")
     datasets = {}
     if val_path or test_path:
+        logger.info("Using separate validation/test datasets")
         datasets['train'] = full_dataset
         if val_path:
             if dataset_type == "plain_text":
@@ -168,6 +162,7 @@ def load_dataset_from_config(config, tokenizer):
             logger.info(f"Loaded {len(datasets['test'])} test samples from {test_path}")
     
     else:
+        logger.info("Splitting dataset into train/val/test")
         train_ratio = float(config["training_data"].get("train_ratio", 0.8))
         val_ratio = float(config["training_data"].get("val_ratio", 0.1))
         test_ratio = float(config["training_data"].get("test_ratio", 0.1))

@@ -1,164 +1,186 @@
-import json
 import os
+import json
 import torch
-from datetime import datetime
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import logging
-import concurrent.futures
-
-logger = logging.getLogger(__name__)
-
+import gc
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from peft import PeftModel
+from typing import List, Dict, Optional
+from contextlib import contextmanager
 
 class ModelComparator:
-    def __init__(self, config, metrics_dir):
+    def __init__(self, config: Dict):
         self.config = config
-        self.metrics_dir = metrics_dir
-        self.comparison_path = os.path.join(metrics_dir, "model_comparison.json")
-        self.max_new_tokens = int(config.get("comparison_max_tokens", 150))
-        self.temperature = float(config.get("comparison_temperature", 0.7))
-        self.top_p = float(config.get("comparison_top_p", 0.9))
-        self.do_sample = config.get("comparison_do_sample", "True").lower() == "true"
-        
-    def load_prompts_from_file(self, prompts_file):
-        if not os.path.exists(prompts_file):
-            logger.warning(f"Prompts file not found: {prompts_file}")
-            return []
-        
-        prompts = []
-        with open(prompts_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-            
-            paragraphs = content.split('\n\n')
-            
-            for para in paragraphs:
-                para = para.strip()
-                if para:  
-                    prompts.append(para)
-        
-        logger.info(f"Loaded {len(prompts)} prompts from {prompts_file}")
-        return prompts
-    
-    def generate_response(self, model, tokenizer, prompt, device="cpu"):
+        self.logger = logging.getLogger(__name__)
+
+    @contextmanager
+    def _load_model_context(self, model_name: str, adapter_path: Optional[str] = None,
+                           device: str = "cpu", use_8bit: bool = False):
+        model = None
+        tokenizer = None
         try:
-            inputs = tokenizer(
-                prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=512
+            hf_token = self.config.get("huggingface", {}).get("token")
+            if not hf_token:
+                hf_token = os.environ.get("HUGGINGFACE_TOKEN")
+            
+            dtype = torch.float32 if device in ["cpu", "mps"] else torch.float16
+            load_in_8bit = use_8bit and device == "cuda"
+            
+            self.logger.info(f"Loading model: {model_name} on {device} with {dtype}")
+            
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                token=hf_token,
+                trust_remote_code=True
+            )
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                token=hf_token,
+                trust_remote_code=True,
+                torch_dtype=dtype,
+                load_in_8bit=load_in_8bit,
+                device_map=None,
+                low_cpu_mem_usage=True
             )
             
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            if adapter_path:
+                self.logger.info(f"Loading PEFT adapter from: {adapter_path}")
+                model = PeftModel.from_pretrained(model, adapter_path)
+                self.logger.info(f"Adapter loaded successfully. Trainable params: {model.print_trainable_parameters()}")
+
+            
+            model = model.to(device)
+            model.eval()
+            
+            for param in model.parameters():
+                param.requires_grad = False
+            
+            yield model, tokenizer
+        
+        finally:
+            if model is not None:
+                del model
+            if tokenizer is not None:
+                del tokenizer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+
+    def compare_models(self, base_model_name: str, finetuned_model_path: str,
+                      prompts_file: str, output_file: str, device: str = "cpu",
+                      max_new_tokens: int = 100) -> List[Dict]:
+        self.logger.info("="*60)
+        self.logger.info("Starting Model Comparison")
+        self.logger.info("="*60)
+        
+        prompts = self._load_prompts(prompts_file)
+        if not prompts:
+            self.logger.error("No prompts loaded.")
+            return []
+        
+        self.logger.info(f"Loaded {len(prompts)} prompts from {prompts_file}")
+        
+        base_responses = []
+        finetuned_responses = []
+        
+        try:
+            self.logger.info("\nGenerating responses from BASE MODEL")
+            with self._load_model_context(base_model_name, None, device) as (base_model, tokenizer):
+                for idx, prompt in enumerate(prompts):
+                    self.logger.info(f"Base model - Prompt {idx + 1}/{len(prompts)}")
+                    response = self._generate_response(base_model, tokenizer, prompt, device, max_new_tokens)
+                    base_responses.append(response)
+            
+            gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            elif device == "mps":
+                torch.mps.empty_cache()
+            
+            self.logger.info("\nGenerating responses from FINE-TUNED MODEL")
+            with self._load_model_context(base_model_name, finetuned_model_path, device) as (ft_model, tokenizer):
+                for idx, prompt in enumerate(prompts):
+                    self.logger.info(f"Fine-tuned - Prompt {idx + 1}/{len(prompts)}")
+                    response = self._generate_response(ft_model, tokenizer, prompt, device, max_new_tokens)
+                    finetuned_responses.append(response)
+            
+            comparisons = []
+            for idx, (prompt, base_resp, ft_resp) in enumerate(zip(prompts, base_responses, finetuned_responses)):
+                comparisons.append({
+                    "prompt_id": idx + 1,
+                    "prompt": prompt,
+                    "base_model_response": base_resp,
+                    "finetuned_model_response": ft_resp,
+                    "response_length_diff": len(ft_resp) - len(base_resp)
+                })
+            
+            self._save_comparisons(comparisons, output_file)
+            self.logger.info(f"\n{'='*60}")
+            self.logger.info(f"Comparison complete! Results: {output_file}")
+            self.logger.info(f"{'='*60}")
+            return comparisons
+        
+        except Exception as e:
+            self.logger.error(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def _generate_response(self, model, tokenizer, prompt: str, device: str, max_new_tokens: int = 100) -> str:
+        try:
+            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024, padding=False)
+            input_ids = inputs["input_ids"].to(device)
+            attention_mask = inputs["attention_mask"].to(device)
+            
             with torch.no_grad():
                 outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    do_sample=self.do_sample,
-                    pad_token_id=tokenizer.eos_token_id,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=max_new_tokens,
+                    min_new_tokens=20,
+                    do_sample=False,
+                    temperature=0.7,
+                    top_p=0.9,
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    use_cache=True
                 )
             
-            generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            if generated_text.startswith(prompt):
-                response = generated_text[len(prompt):].strip()
-            else:
-                response = generated_text
-            
-            return response
-            
+            generated_ids = outputs[0][input_ids.shape[1]:]
+            response = tokenizer.decode(generated_ids, skip_special_tokens=True)
+            del inputs, input_ids, attention_mask, outputs, generated_ids
+            return response.strip()
+        
         except Exception as e:
-            logger.error(f"Error generating response: {e}")
+            self.logger.error(f"Generation error: {e}")
             return f"[Error: {str(e)}]"
 
-    def compare_models(self, base_model_name, finetuned_model_path, prompts_file, device="cpu", num_workers=1):
-        logger.info("="*60)
-        logger.info("Starting Model Comparison")
-        logger.info("="*60)
-        
-        prompts = self.load_prompts_from_file(prompts_file)
-        
-        if not prompts:
-            logger.warning("No prompts found. Skipping comparison.")
-            return None
-        
-        logger.info(f"Loading tokenizer from {base_model_name}...")
-        tokenizer = AutoTokenizer.from_pretrained(
-            base_model_name,
-            use_auth_token=self.config.get("model", {}).get("use_auth_token", False)
-        )
-        
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        
-        logger.info(f"Loading base model: {base_model_name}...")
-        base_model = AutoModelForCausalLM.from_pretrained(
-            base_model_name,
-            use_auth_token=self.config.get("model", {}).get("use_auth_token", False)
-        )
-        base_model.to(device)
-        base_model.eval()
-        
-        logger.info(f"Loading fine-tuned model from: {finetuned_model_path}...")
-        finetuned_model = AutoModelForCausalLM.from_pretrained(finetuned_model_path)
-        finetuned_model.to(device)
-        finetuned_model.eval()
-        comparisons = []
-        def process_prompt(args):
-            idx, prompt = args
-            logger.info(f"Processing prompt {idx}/{len(prompts)}...")
-            prompt_preview = prompt[:100] + "..." if len(prompt) > 100 else prompt
-            base_response = self.generate_response(base_model, tokenizer, prompt, device)
-            finetuned_response = self.generate_response(finetuned_model, tokenizer, prompt, device)
-            return {
-                "prompt_id": idx,
-                "prompt": prompt,
-                "prompt_preview": prompt_preview,
-                "base_model_response": base_response,
-                "finetuned_model_response": finetuned_response,
-                "timestamp": datetime.now().isoformat()
-            }
+    def _load_prompts(self, prompts_file: str) -> List[str]:
+        if not os.path.exists(prompts_file):
+            self.logger.error(f"File not found: {prompts_file}")
+            return []
+        try:
+            with open(prompts_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            if '\n\n' not in content:
+                prompts = [line.strip() for line in content.split('\n') if line.strip()]
+            else:
+                prompts = [p.strip() for p in content.split('\n\n') if p.strip()]
+            return prompts
+        except Exception as e:
+            self.logger.error(f"Error loading prompts: {e}")
+            return []
 
-        prompt_args = list(enumerate(prompts, 1))
-
-        if num_workers == 1:
-            for args in prompt_args:
-                comparison = process_prompt(args)
-                comparisons.append(comparison)
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-                for comparison in executor.map(process_prompt, prompt_args):
-                    comparisons.append(comparison)
-        
-        comparison_report = {
-            "metadata": {
-                "base_model": base_model_name,
-                "finetuned_model_path": finetuned_model_path,
-                "prompts_file": prompts_file,
-                "num_prompts": len(prompts),
-                "generation_params": {
-                    "max_new_tokens": self.max_new_tokens,
-                    "temperature": self.temperature,
-                    "top_p": self.top_p,
-                    "do_sample": self.do_sample
-                },
-                "device": device,
-                "comparison_date": datetime.now().isoformat()
-            },
-            "comparisons": comparisons
-        }
-        
-        with open(self.comparison_path, 'w', encoding='utf-8') as f:
-            json.dump(comparison_report, f, indent=2, ensure_ascii=False)
-        
-        logger.info("="*60)
-        logger.info(f"Model comparison complete!")
-        logger.info(f"Results saved to: {self.comparison_path}")
-        logger.info(f"Total prompts processed: {len(comparisons)}")
-        logger.info("="*60)
-        
-        del base_model
-        del finetuned_model
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
-        
-        return comparison_report
+    def _save_comparisons(self, comparisons: List[Dict], output_file: str):
+        try:
+            os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(comparisons, f, indent=2, ensure_ascii=False)
+            self.logger.info(f"Saved {len(comparisons)} comparisons to {output_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to save: {e}")

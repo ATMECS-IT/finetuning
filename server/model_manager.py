@@ -2,7 +2,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 def load_model_from_config(config):
-    model_name = config["model"]["name"]
+    model_name = config["model"]["model_name"]
     tokenizer_name = config["model"]["tokenizer"]
     cache_dir=config["model"].get("cache_dir", None)
     token = config["huggingface"]["token"] if config["model"].get("use_auth_token") else None
@@ -30,8 +30,6 @@ def load_model_from_config(config):
             tokenizer.pad_token = pad_token
     elif tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-
-
 
     # Load model with quantization if specified
     model_kwargs = {

@@ -41,11 +41,9 @@ class BaseFinetuneMethod:
 
     def train(self, train_dataset, eval_dataset=None):
         device_preference = self.config["fine_tuning"].get("device", "auto").lower()
-        
         use_fp16 = False
         use_bf16 = False
         use_cpu = False
-        
         if device_preference == "auto":
             if torch.cuda.is_available():
                 device = "cuda"
@@ -92,12 +90,14 @@ class BaseFinetuneMethod:
         
         # SFT Configuration
         if eval_dataset:
+            print("HERE---")
             eval_strategy = "steps"
-            eval_steps = int(self.config.get("eval_steps", 100))
+            eval_steps = int(self.config.get("eval_steps", 10))
             save_strategy = "steps"
             save_steps = eval_steps
             load_best = True
         else:
+            print("NO EVAL DATASET---")
             eval_strategy = "no"
             eval_steps = None
             save_strategy = self.config["fine_tuning"].get("save_strategy", "epoch")
@@ -159,7 +159,7 @@ class BaseFinetuneMethod:
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset if eval_dataset else None,
-            compute_metrics=compute_metrics,  
+            compute_metrics=lambda eval_pred: compute_metrics(eval_pred, self.tokenizer, task_type="auto"),
             callbacks=[metrics_callback],
         )
         trainer.train()
@@ -173,8 +173,10 @@ class LoRAMethod(BaseFinetuneMethod):
     def prepare_model(self):
         target_modules_str = self.config.get("lora_target_modules", "")
         if target_modules_str and target_modules_str != "auto":
+            logger.info(f"Using specified target modules for LoRA: {target_modules_str}")
             target_modules = target_modules_str.split(",")
         else:
+            logger.info("Auto-detecting target modules for LoRA")
             target_modules = find_target_modules(self.model)
         
         self.peft_config = LoraConfig(
@@ -186,6 +188,7 @@ class LoRAMethod(BaseFinetuneMethod):
             task_type=TaskType.CAUSAL_LM,
         )
         logger.info("LoRA adapter applied to model")
+        self.model = get_peft_model(self.model, self.peft_config)
         return self.model
 
 
@@ -205,7 +208,7 @@ class QLoRAMethod(BaseFinetuneMethod):
             bias=self.config.get("lora_bias", "none"),
             task_type=TaskType.CAUSAL_LM,
         )
-        
+        self.model = get_peft_model(self.model, self.peft_config)
         logger.info("QLoRA configuration prepared for quantized model")
         return self.model
 
@@ -227,7 +230,7 @@ class DoRAMethod(BaseFinetuneMethod):
             use_dora=True,
             task_type=TaskType.CAUSAL_LM,
         )
-        
+        self.model = get_peft_model(self.model, self.peft_config)
         logger.info("DoRA configuration prepared")
         return self.model
 
@@ -255,6 +258,7 @@ FINETUNING_METHODS = {
 
 def finetune_model(model, tokenizer, train_dataset, config, eval_dataset=None):
     technique = config["fine_tuning"].get("technique", "lora").lower()
+    print(f"Using fine-tuning technique: {technique}", config["fine_tuning"]["technique"])
     MethodClass = FINETUNING_METHODS.get(technique)
     if MethodClass is None:
         raise ValueError(
@@ -264,4 +268,5 @@ def finetune_model(model, tokenizer, train_dataset, config, eval_dataset=None):
     
     finetuner = MethodClass(model, tokenizer, config)
     model = finetuner.prepare_model()
+    print("----eval dataset----", eval_dataset)
     return finetuner.train(train_dataset, eval_dataset)

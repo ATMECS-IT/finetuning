@@ -9,13 +9,13 @@ def load_config_from_env(env_file_path):
     
     config = {
         "project": {
-            "name": config_raw.get("PROJECT_NAME", "default_project"),
+            "project_name": config_raw.get("PROJECT_NAME", "default_project"),
         },
         "huggingface": {
             "token": config_raw.get("HUGGINGFACE_TOKEN", ""),
         },
         "model": {
-            "name": config_raw.get("MODEL_NAME", "gpt2"),
+            "model_name": config_raw.get("MODEL_NAME", "gpt2"),
             "tokenizer": config_raw.get("TOKENIZER", "gpt2"),
             "cache_dir": config_raw.get("CACHE_DIR", "./models"),
             "use_auth_token": config_raw.get("USE_AUTH_TOKEN", "False").lower() == "true",
@@ -55,7 +55,15 @@ def load_config_from_env(env_file_path):
         "bnb_4bit_use_double_quant": config_raw.get("BNB_4BIT_USE_DOUBLE_QUANT", "False").lower() == "true",
         "bnb_4bit_quant_type": config_raw.get("BNB_4BIT_QUANT_TYPE", "nf4"),
     }
-    
+    config["database"] = {
+        "mongodb_uri": config_raw.get("MONGODB_URI", "mongodb://127.0.0.1:27017/"),
+        "mongodb_db_name": config_raw.get("MONGODB_DB_NAME", "llm_finetuning"),
+        "mongodb_enabled": config_raw.get("MONGODB_ENABLED", "true")
+    }
+    config['comparison'] = {
+        'prompts_file': os.getenv('PROMPTS_FILE', './prompts.txt'),
+        'max_new_tokens': int(os.getenv('MAX_NEW_TOKENS', 100))
+    }
     return config
 
 
