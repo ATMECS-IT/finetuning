@@ -8,7 +8,7 @@ A production-ready, modular framework for fine-tuning Large Language Models with
 
 ### Basic Training
 
-python main.py --data_path ./data/train.jsonl --dataset_type mcq_jsonl --technique lora --device cuda --epochs 3 --batch_size 4
+python main.py --data_path ./data/train.jsonl --dataset_type qa --technique lora --device cuda --epochs 3 --batch_size 4
 
 ### With MongoDB and Model Comparison
 
@@ -39,7 +39,7 @@ Get from: https://huggingface.co/settings/tokens
 Formats: .jsonl, .txt
 
 --dataset_type: Format of training data (required)  
-Options: plain_text, mcq_jsonl, instruction_jsonl
+Options: plain_text, , instruction_jsonl
 
 --val_path: Separate validation data file (optional)
 
@@ -142,7 +142,7 @@ HUGGINGFACE_TOKEN=your_token_here
 
 # Data
 TRAIN_DATA_PATH=./data/train.jsonl
-DATASET_TYPE=mcq_jsonl
+DATASET_TYPE=text
 
 # Fine-Tuning
 TECHNIQUE=lora
@@ -180,7 +180,7 @@ python main.py --model_name gpt2 --data_path ./data/sample.jsonl --dataset_type 
 
 ### 2. Production GPU Training
 
-python main.py --model_name gpt2 --data_path ./data/train.jsonl --dataset_type mcq_jsonl --technique lora --lora_r 16 --lora_alpha 32 --epochs 5 --batch_size 8 --learning_rate 2e-4 --device cuda --eval_steps 50
+python main.py --model_name gpt2 --data_path ./data/train.jsonl --dataset_type  --technique lora --lora_r 16 --lora_alpha 32 --epochs 5 --batch_size 8 --learning_rate 2e-4 --device cuda --eval_steps 50
 
 ### 3. Large Model with QLoRA
 
@@ -188,7 +188,7 @@ python main.py --model_name meta-llama/Llama-2-7b-hf --hf_token your_token --dat
 
 ### 4. Medical QA with Model Comparison
 
-python main.py --model_name gpt2 --data_path ./data/medical_qa.jsonl --dataset_type mcq_jsonl --technique lora --lora_r 32 --epochs 10 --batch_size 8 --device cuda --prompts_file ./medical_prompts.txt
+python main.py --model_name gpt2 --data_path ./data/medical_qa.jsonl --dataset_type  --technique lora --lora_r 32 --epochs 10 --batch_size 8 --device cuda --prompts_file ./medical_prompts.txt
 
 ### 5. Using Config File
 

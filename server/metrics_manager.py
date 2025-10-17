@@ -8,7 +8,7 @@ import numpy as np
 from pymongo import MongoClient, ASCENDING
 
 class MetricsCallback(TrainerCallback):
-    def __init__(self, config):
+    def __init__(self, config, timestamp=None):
         self.debug = []
         self.config = config
         self.log_interval = int(config.get("log_interval", 10))
@@ -16,8 +16,10 @@ class MetricsCallback(TrainerCallback):
         self.epoch_metrics = []
         self.eval_metrics = []
         self.epoch_start_time = None
-        
-        self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if timestamp:
+            self.run_timestamp = timestamp
+        else:
+            self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         project_name = config.get("project", {}).get("project_name", "default_project")
         model_name = config.get("model", {}).get("model_name", "unknown_model").replace("/", "_")
         
@@ -298,7 +300,6 @@ def compute_metrics(eval_pred, tokenizer=None, task_type="auto"):
 
     metrics = {}
 
-    # Single-label classification
     if task_type == "classification":
         predictions = np.argmax(logits, axis=-1)
         acc = accuracy_score(labels, predictions)
@@ -311,8 +312,6 @@ def compute_metrics(eval_pred, tokenizer=None, task_type="auto"):
             "precision": precision,
             "f1": f1,
         })
-
-    # Multi-label classification
     elif task_type == "multilabel":
         predictions = (logits > 0.5).astype(int)
         acc = accuracy_score(labels, predictions)
@@ -325,8 +324,6 @@ def compute_metrics(eval_pred, tokenizer=None, task_type="auto"):
             "precision": precision,
             "f1": f1,
         })
-
-    # Sequence-to-sequence or token-level (e.g., causal LM)
     elif task_type == "sequence":
         predictions = np.argmax(logits, axis=-1)
         mask = labels != -100
@@ -342,7 +339,6 @@ def compute_metrics(eval_pred, tokenizer=None, task_type="auto"):
             "precision": precision,
             "f1": f1,
         })
-        # Optionally compute BLEU/ROUGE if tokenizer provided
         if tokenizer is not None:
             preds_text = tokenizer.batch_decode(predictions, skip_special_tokens=True)
             labels_text = tokenizer.batch_decode(labels, skip_special_tokens=True)
@@ -350,8 +346,6 @@ def compute_metrics(eval_pred, tokenizer=None, task_type="auto"):
             rouge = rouge_metric.compute(predictions=preds_text, references=labels_text)
             metrics["bleu"] = bleu.get("bleu", None)
             metrics["rougeL"] = rouge.get("rougeL", None)
-
-    # Fallback: just return empty dict
     else:
         metrics = {}
 

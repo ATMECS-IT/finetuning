@@ -12,8 +12,7 @@ class DatabaseManager:
         self.logger = logging.getLogger(__name__)
         self.client = None
         self.db = None
-        self.enabled = config.get("database", {}).get("mongodb_enabled", "false").lower() == "true"
-        
+        self.enabled = config.get("database", {}).get("mongodb_enabled", "false").lower() == "true"     
         if self.enabled:
             self._connect()
             self.logger.info("DatabaseManager initialized and connected")
@@ -31,15 +30,13 @@ class DatabaseManager:
                 connectTimeoutMS=10000,
                 socketTimeoutMS=10000
             )
-            
             self.client.admin.command('ping')
             self.logger.info(f"Successfully connected to MongoDB at {uri}")
-            
+
             self.db = self.client[db_name]
             self.logger.info(f"Using database: {db_name}")
             
             self._create_indexes()
-            
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             self.logger.error(f"Failed to connect to MongoDB: {e}")
             self.enabled = False
@@ -73,6 +70,10 @@ class DatabaseManager:
             self.db.final_metrics.create_index([("timestamp", 1)])
             self.db.final_metrics.create_index([("project_name", 1), ("model_name", 1), ("timestamp", -1)])
             
+            self.db.evalutor.create_index([("project_name", 1)])
+            self.db.evalutor.create_index([("model_name", 1)])
+            self.db.evalutor.create_index([("timestamp", -1)])
+            self.db.evalutor.create_index([("project_name", 1), ("model_name", 1), ("timestamp", -1)])
             self.logger.info("Created MongoDB indexes")
         except Exception as e:
             self.logger.warning(f"Failed to create indexes: {e}")
@@ -96,6 +97,18 @@ class DatabaseManager:
             self.logger.error(f"Failed to create training run: {e}")
             return None
     
+    def save_evaluation_comparator(self, eval_data: dict):
+        if not self.enabled:
+            self.logger.warning("DatabaseManager is not enabled")
+            return
+        try:
+            eval_data["saved_at"] = datetime.utcnow()
+            self.db.evalutor.insert_one(eval_data)
+            self.logger.info("Saved evaluation_comparator document to evalutor collection")
+        except Exception as e:
+            self.logger.error(f"Failed to save evaluation_comparator: {e}")
+
+
     def update_training_run(self, run_id: str, update_data: Dict):
         if not self.enabled or not run_id:
             return
@@ -175,8 +188,12 @@ class DatabaseManager:
         
         try:
             for comparison in comparisons:
-                comparison["run_id"] = run_id
-                comparison["saved_at"] = datetime.utcnow()
+                if isinstance(comparison, str):
+                    self.logger.warning(f"Comparison entry is a string, converting to dict. Value: {comparison}")
+                    comparison = {"value": comparison}
+                else:
+                    comparison["run_id"] = run_id
+                    comparison["saved_at"] = datetime.utcnow()
             
             self.db.model_comparisons.insert_many(comparisons)
             self.logger.info(f"Saved {len(comparisons)} model comparisons for run {run_id}")
@@ -223,11 +240,8 @@ class DatabaseManager:
                 run["_id"] = str(run["_id"])
             
             step_metrics = list(self.db.step_metrics.find({"run_id": run_id}))
-            
             epoch_metrics = list(self.db.epoch_metrics.find({"run_id": run_id}))
-            
             final_metrics = self.db.final_metrics.find_one({"run_id": run_id})
-            
             comparisons = list(self.db.model_comparisons.find({"run_id": run_id}))
             
             return {

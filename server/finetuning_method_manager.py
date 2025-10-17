@@ -4,7 +4,6 @@ import os
 from transformers import Trainer, TrainingArguments
 from peft import get_peft_model, LoraConfig, TaskType
 from metrics_manager import MetricsCallback, compute_metrics
-from trl import SFTTrainer, SFTConfig
 from transformers import Trainer, TrainingArguments
 
 logger = logging.getLogger(__name__)
@@ -30,11 +29,12 @@ def find_target_modules(model):
 
 
 class BaseFinetuneMethod:
-    def __init__(self, model, tokenizer, config):
+    def __init__(self, model, tokenizer, config,timestamp):
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
-        self.peft_config = None 
+        self.peft_config = None
+        self.timestamp = timestamp
 
     def prepare_model(self):
         return self.model
@@ -80,15 +80,13 @@ class BaseFinetuneMethod:
         else:
             raise ValueError(f"Invalid device: {device_preference}. Choose from: auto, cuda, mps, cpu")
 
-        metrics_callback = MetricsCallback(self.config)
+        metrics_callback = MetricsCallback(self.config,self.timestamp)
         timestamped_output_dir = os.path.join(
             metrics_callback.metrics_dir,
             "model"
         )
         os.makedirs(timestamped_output_dir, exist_ok=True)
         technique = self.config["fine_tuning"].get("technique", "lora").lower()
-        
-        # SFT Configuration
         if eval_dataset:
             print("HERE---")
             eval_strategy = "steps"
@@ -103,39 +101,7 @@ class BaseFinetuneMethod:
             save_strategy = self.config["fine_tuning"].get("save_strategy", "epoch")
             save_steps = None
             load_best = False
-        
-        # sft_config = SFTConfig(
-        #     output_dir=self.config["fine_tuning"]["output_dir"],
-        #     num_train_epochs=int(self.config["fine_tuning"].get("epochs", 3)),
-        #     per_device_train_batch_size=int(self.config["fine_tuning"].get("batch_size", 4)),
-        #     gradient_accumulation_steps=int(self.config["fine_tuning"].get("grad_acc_steps", 4)),
-        #     learning_rate=float(self.config["fine_tuning"].get("learning_rate", 3e-4)),
-        #     logging_steps=int(self.config.get("log_interval", 10)),
-        #     save_strategy=save_strategy,
-        #     save_steps=save_steps,
-        #     eval_strategy=eval_strategy,
-        #     eval_steps=eval_steps,
-        #     load_best_model_at_end=load_best,
-        #     max_length=int(self.config.get("max_length", 512)),
-        #     packing=self.config.get("packing", False),
-        #     dataset_text_field=None,  # Will be handled automatically by SFTTrainer
-        #     fp16=use_fp16,
-        #     bf16=use_bf16,
-        # )
-        
-        # # Initialize trainer with optional PEFT config
-        # trainer = SFTTrainer(
-        #     model=self.model,
-        #     args=sft_config,
-        #     train_dataset=train_dataset,  # Pass dataset directly, not dataloader.dataset
-        #     eval_dataset=eval_dataset if eval_dataset else None,
-        #     processing_class=self.tokenizer,
-        #     peft_config=self.peft_config,
-        #     callbacks=[metrics_callback],
-        # )
-        
-        # # Train
-        # trainer.train()
+
         training_args = TrainingArguments(
             output_dir=timestamped_output_dir,
             num_train_epochs=int(self.config["fine_tuning"].get("epochs", 3)),
@@ -151,7 +117,7 @@ class BaseFinetuneMethod:
             load_best_model_at_end=load_best,
             fp16=use_fp16,
             bf16=use_bf16,
-            report_to="none",  # Disable wandb/tensorboard if not configured
+            report_to="none",  
         )
         
         trainer = Trainer(
@@ -255,8 +221,7 @@ FINETUNING_METHODS = {
     "adapter": AdapterMethod,
 }
 
-
-def finetune_model(model, tokenizer, train_dataset, config, eval_dataset=None):
+def finetune_model(model, tokenizer, train_dataset, config, eval_dataset=None, timestamp=None):
     technique = config["fine_tuning"].get("technique", "lora").lower()
     print(f"Using fine-tuning technique: {technique}", config["fine_tuning"]["technique"])
     MethodClass = FINETUNING_METHODS.get(technique)
@@ -266,7 +231,6 @@ def finetune_model(model, tokenizer, train_dataset, config, eval_dataset=None):
             f"Available methods: {list(FINETUNING_METHODS.keys())}"
         )
     
-    finetuner = MethodClass(model, tokenizer, config)
+    finetuner = MethodClass(model, tokenizer, config,timestamp)
     model = finetuner.prepare_model()
-    print("----eval dataset----", eval_dataset)
     return finetuner.train(train_dataset, eval_dataset)

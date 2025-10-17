@@ -31,12 +31,11 @@ def load_model_from_config(config):
     elif tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Load model with quantization if specified
+    
     model_kwargs = {
         "cache_dir": cache_dir,
         "use_auth_token": token,
     }
-    
     # Handle quantization for QLoRA
     if config.get("load_in_4bit", False):
         from transformers import BitsAndBytesConfig
